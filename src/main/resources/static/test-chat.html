@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ChatFlow Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs/lib/stomp.min.js"></script>
+</head>
+<body>
+    <h2>ChatFlow WebSocket Test</h2>
+    <input id="token" placeholder="Paste JWT token here" style="width:400px"/>
+    <input id="message" placeholder="Type message"/>
+    <button onclick="sendMessage()">Send</button>
+    <div id="output"></div>
+
+    <script>
+        var stompClient = null;
+
+        function connect() {
+            var socket = new SockJS('http://localhost:8080/ws');
+            stompClient = Stomp.over(socket);
+            stompClient.connect({}, function() {
+                console.log('Connected!');
+                stompClient.subscribe('/topic/room/1', function(msg) {
+                    var body = JSON.parse(msg.body);
+                    document.getElementById('output').innerHTML +=
+                        '<p><b>' + body.sender + ':</b> ' + body.content + '</p>';
+                });
+            });
+        }
+
+        function sendMessage() {
+            var content = document.getElementById('message').value;
+            var token = document.getElementById('token').value;
+            stompClient.send('/app/chat/1', {},
+                JSON.stringify({ content: content, sender: token }));
+        }
+
+        connect();
+    </script>
+</body>
+</html>
