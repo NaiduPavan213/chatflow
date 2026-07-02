@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+
+application.properties
+
+chatflow_db_v0xz_user
+ZMXkEHL9MPsu4nYr62UFfGZ1xZ8xzMH4
+postgresql://chatflow_db_v0xz_user:ZMXkEHL9MPsu4nYr62UFfGZ1xZ8xzMH4@dpg-d92f10rtqb8s73fcijdg-a/chatflow_db_v0xz
