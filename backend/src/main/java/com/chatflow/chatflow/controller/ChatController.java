@@ -45,6 +45,12 @@ public class ChatController {
                             Principal principal) {
         ChatMessage saved = chatService.saveMessage(roomId, principal.getName(), chatMessage.getContent());
         messagingTemplate.convertAndSend("/topic/room/" + roomId, saved);
+        // Lightweight feed for sidebars, so rooms you're not viewing can show unread badges
+        messagingTemplate.convertAndSend("/topic/rooms/activity", Map.of(
+                "type", "message",
+                "roomId", roomId,
+                "messageId", saved.getId(),
+                "sender", saved.getSender()));
     }
 
     /** Relays "is typing" to everyone in the room, with the sender's real username. */

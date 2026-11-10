@@ -43,15 +43,24 @@ function dayLabel(date) {
     });
 }
 
-/** Adds day separators and marks messages that continue the previous sender's group. */
-function buildTimeline(messages) {
+/**
+ * Adds day separators, a "New messages" divider before the first message from someone else that
+ * arrived after `lastReadId` (when known), and marks messages that continue the previous sender's group.
+ */
+function buildTimeline(messages, lastReadId, me) {
     const items = [];
     let prev = null;
+    let newShown = false;
     for (const msg of messages) {
         const date = new Date(msg.sentAt);
         const newDay = !prev || prev.date.toDateString() !== date.toDateString();
         if (newDay) items.push({ type: 'day', key: `day-${date.toDateString()}`, label: dayLabel(date) });
-        const grouped = !newDay && prev.sender === msg.sender && date - prev.date < GROUP_WINDOW_MS;
+        const isNew = !newShown && lastReadId != null && msg.id > lastReadId && msg.sender !== me && !msg.deleted;
+        if (isNew) {
+            items.push({ type: 'new', key: 'new-messages' });
+            newShown = true;
+        }
+        const grouped = !newDay && !isNew && prev.sender === msg.sender && date - prev.date < GROUP_WINDOW_MS;
         items.push({ type: 'message', key: msg.id, msg, date, grouped });
         prev = { sender: msg.sender, date };
     }
@@ -88,6 +97,9 @@ export default function ChatRoom({ roomId }) {
     const [online, setOnline] = useState([]);
     const [typing, setTyping] = useState({}); // username -> time until which to show "typing"
     const [membersOpen, setMembersOpen] = useState(() => window.matchMedia('(min-width: 1280px)').matches);
+    // Read marker as it was when the room was opened (null = never opened), for the "New messages" divider
+    const [lastReadAtOpen, setLastReadAtOpen] = useState(null);
+    const lastReadSentRef = useRef(0);
     const [editingId, setEditingId] = useState(null);
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [deleting, setDeleting] = useState(false);
@@ -107,7 +119,11 @@ export default function ChatRoom({ roomId }) {
                 .finally(() => { if (!cancelled) setLoaded(true); });
 
         api.get(`/rooms/${roomId}`)
-            .then((res) => { if (!cancelled) setRoomName(res.data.name); })
+            .then((res) => {
+                if (cancelled) return;
+                setRoomName(res.data.name);
+                setLastReadAtOpen(res.data.lastReadMessageId ?? null);
+            })
             .catch((err) => { if (!cancelled) setError(getErrorMessage(err, 'Room not found')); });
 
         const client = new Client({
@@ -159,6 +175,24 @@ export default function ChatRoom({ roomId }) {
             client.deactivate();
         };
     }, [roomId, token, username]);
+
+    // Tell the server we've seen the newest message, while this tab is visible (debounced)
+    useEffect(() => {
+        const newest = messages.length ? messages[messages.length - 1].id : 0;
+        if (!newest || newest <= lastReadSentRef.current) return;
+        const markRead = () => {
+            if (document.visibilityState !== 'visible' || newest <= lastReadSentRef.current) return;
+            lastReadSentRef.current = newest;
+            api.post(`/rooms/${roomId}/read`, { lastMessageId: newest })
+                .catch(() => { lastReadSentRef.current = 0; }); // try again next time
+        };
+        const timer = setTimeout(markRead, 800);
+        document.addEventListener('visibilitychange', markRead);
+        return () => {
+            clearTimeout(timer);
+            document.removeEventListener('visibilitychange', markRead);
+        };
+    }, [messages, roomId]);
 
     // Drop "typing" for people who stopped without sending
     useEffect(() => {
@@ -278,7 +312,7 @@ export default function ChatRoom({ roomId }) {
         }
     };
 
-    const timeline = buildTimeline(messages);
+    const timeline = buildTimeline(messages, lastReadAtOpen, username);
     const remaining = MAX_LENGTH - content.length;
     // Our own subscription may not be in the server's snapshot yet, so add ourselves while connected
     const onlineNames = connected && username && !online.includes(username)
@@ -348,7 +382,15 @@ export default function ChatRoom({ roomId }) {
                                 </div>
                             ) : (
                                 timeline.map((item) =>
-                                    item.type === 'day' ? (
+                                    item.type === 'new' ? (
+                                        <div key={item.key} className="my-4 flex items-center gap-3" role="separator" aria-label="New messages">
+                                            <div className="h-px flex-1 bg-rose-400/70 dark:bg-rose-500/60" />
+                                            <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-rose-600 dark:bg-rose-500/10 dark:text-rose-400">
+                                                New messages
+                                            </span>
+                                            <div className="h-px flex-1 bg-rose-400/70 dark:bg-rose-500/60" />
+                                        </div>
+                                    ) : item.type === 'day' ? (
                                         <div key={item.key} className="my-5 flex items-center gap-3" role="separator">
                                             <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
                                             <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{item.label}</span>

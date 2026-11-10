@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import SockJS from 'sockjs-client';
+import { Client } from '@stomp/stompjs';
 import { Hash, LogOut, Menu, Plus, Search, X } from 'lucide-react';
-import api, { getErrorMessage } from '../api/axios';
+import api, { WS_URL, getErrorMessage } from '../api/axios';
 import { useAuth } from '../context/auth';
 import Avatar from './Avatar';
 import Logo from './Logo';
@@ -28,8 +30,9 @@ function RoomSkeleton() {
  */
 export default function AppShell({ activeRoomId, header, status = ONLINE, children }) {
     const navigate = useNavigate();
-    const { username, logout } = useAuth();
+    const { username, token, logout } = useAuth();
     const [rooms, setRooms] = useState(null);
+    const [unread, setUnread] = useState({}); // roomId -> unread count
     const [loadError, setLoadError] = useState('');
     const [drawerOpen, setDrawerOpen] = useState(!activeRoomId);
     const [query, setQuery] = useState('');
@@ -40,7 +43,11 @@ export default function AppShell({ activeRoomId, header, status = ONLINE, childr
     useEffect(() => {
         let cancelled = false;
         api.get('/rooms')
-            .then((res) => { if (!cancelled) setRooms(res.data); })
+            .then((res) => {
+                if (cancelled) return;
+                setRooms(res.data);
+                setUnread(Object.fromEntries(res.data.map((r) => [r.id, r.unreadCount ?? 0])));
+            })
             .catch((err) => {
                 if (cancelled) return;
                 setRooms([]);
@@ -48,6 +55,28 @@ export default function AppShell({ activeRoomId, header, status = ONLINE, childr
             });
         return () => { cancelled = true; };
     }, []);
+
+    // Live feed of activity in all rooms: new rooms appear, and badges count up for rooms you're not in
+    useEffect(() => {
+        const client = new Client({
+            webSocketFactory: () => new SockJS(WS_URL),
+            connectHeaders: { Authorization: `Bearer ${token}` },
+            reconnectDelay: 5000,
+            debug: () => {},
+            onConnect: () => {
+                client.subscribe('/topic/rooms/activity', (frame) => {
+                    const event = JSON.parse(frame.body);
+                    if (event.type === 'room') {
+                        setRooms((prev) => (prev && !prev.some((r) => r.id === event.room.id) ? [...prev, event.room] : prev));
+                    } else if (event.type === 'message' && event.sender !== username) {
+                        setUnread((prev) => ({ ...prev, [event.roomId]: (prev[event.roomId] ?? 0) + 1 }));
+                    }
+                });
+            },
+        });
+        client.activate();
+        return () => { client.deactivate(); };
+    }, [token, username]);
 
     useEffect(() => {
         const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
@@ -57,6 +86,13 @@ export default function AppShell({ activeRoomId, header, status = ONLINE, childr
 
     const activeId = activeRoomId ? Number(activeRoomId) : null;
     const filtered = (rooms ?? []).filter((r) => r.name.toLowerCase().includes(query.trim().toLowerCase()));
+    // The room you're looking at is never "unread"
+    const unreadFor = (room) => (room.id === activeId ? 0 : unread[room.id] ?? 0);
+    const totalUnread = (rooms ?? []).reduce((sum, room) => sum + unreadFor(room), 0);
+
+    useEffect(() => {
+        document.title = totalUnread > 0 ? `(${totalUnread > 99 ? '99+' : totalUnread}) ChatFlow` : 'ChatFlow';
+    }, [totalUnread]);
 
     const openRoom = (id) => {
         setDrawerOpen(false);
@@ -166,20 +202,29 @@ export default function AppShell({ activeRoomId, header, status = ONLINE, childr
                 <ul className="space-y-0.5 px-2">
                     {filtered.map((room) => {
                         const active = room.id === activeId;
+                        const count = unreadFor(room);
                         return (
                             <li key={room.id}>
                                 <button
                                     type="button"
                                     onClick={() => openRoom(room.id)}
                                     aria-current={active ? 'page' : undefined}
+                                    aria-label={count > 0 ? `${room.name}, ${count} unread` : room.name}
                                     className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition ${
                                         active
                                             ? 'bg-brand-50 font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
-                                            : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+                                            : count > 0
+                                                ? 'font-semibold text-zinc-900 hover:bg-zinc-100 dark:text-white dark:hover:bg-zinc-800'
+                                                : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
                                     }`}
                                 >
-                                    <Hash className={`size-4 shrink-0 ${active ? '' : 'text-zinc-400 dark:text-zinc-500'}`} />
+                                    <Hash className={`size-4 shrink-0 ${active || count > 0 ? '' : 'text-zinc-400 dark:text-zinc-500'}`} />
                                     <span className="truncate">{room.name}</span>
+                                    {count > 0 && (
+                                        <span className="ml-auto min-w-5 shrink-0 rounded-full bg-brand-600 px-1.5 text-center text-[11px] font-semibold leading-5 text-white">
+                                            {count > 99 ? '99+' : count}
+                                        </span>
+                                    )}
                                 </button>
                             </li>
                         );
@@ -232,10 +277,13 @@ export default function AppShell({ activeRoomId, header, status = ONLINE, childr
                     <button
                         type="button"
                         onClick={() => setDrawerOpen(true)}
-                        aria-label="Open menu"
-                        className="inline-flex size-9 items-center justify-center rounded-lg text-zinc-600 hover:bg-zinc-100 lg:hidden dark:text-zinc-300 dark:hover:bg-zinc-800"
+                        aria-label={totalUnread > 0 ? `Open menu, ${totalUnread} unread` : 'Open menu'}
+                        className="relative inline-flex size-9 items-center justify-center rounded-lg text-zinc-600 hover:bg-zinc-100 lg:hidden dark:text-zinc-300 dark:hover:bg-zinc-800"
                     >
                         <Menu className="size-5" />
+                        {totalUnread > 0 && (
+                            <span className="absolute right-1 top-1 size-2.5 rounded-full bg-brand-500 ring-2 ring-white dark:ring-zinc-900" />
+                        )}
                     </button>
                     <div className="min-w-0 flex-1">{header}</div>
                 </header>
