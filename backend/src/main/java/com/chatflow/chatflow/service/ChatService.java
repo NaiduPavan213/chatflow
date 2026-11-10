@@ -28,14 +28,7 @@ public class ChatService {
 
     @Transactional
     public ChatMessage saveMessage(Long roomId, String email, String content) {
-        String text = content == null ? "" : content.trim();
-        if (text.isEmpty()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Message cannot be empty");
-        }
-        if (text.length() > Message.MAX_LENGTH) {
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "Message is too long (max " + Message.MAX_LENGTH + " characters)");
-        }
+        String text = validContent(content);
 
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "User not found"));
@@ -51,6 +44,32 @@ public class ChatService {
         return toDto(messageRepository.save(message), roomId);
     }
 
+    /** Changes the text of the caller's own message. Unchanged text is not marked as edited. */
+    @Transactional
+    public ChatMessage editMessage(Long roomId, Long messageId, String email, String content) {
+        Message message = ownMessage(roomId, messageId, email);
+        if (message.getDeletedAt() != null) {
+            throw new ApiException(HttpStatus.CONFLICT, "Deleted messages can't be edited");
+        }
+        String text = validContent(content);
+        if (!text.equals(message.getContent())) {
+            message.setContent(text);
+            message.setEditedAt(Instant.now());
+        }
+        return toDto(message, roomId);
+    }
+
+    /** Soft-deletes the caller's own message: it stays in the timeline as "deleted", without its text. */
+    @Transactional
+    public ChatMessage deleteMessage(Long roomId, Long messageId, String email) {
+        Message message = ownMessage(roomId, messageId, email);
+        if (message.getDeletedAt() == null) {
+            message.setContent("");
+            message.setDeletedAt(Instant.now());
+        }
+        return toDto(message, roomId);
+    }
+
     @Transactional(readOnly = true)
     public List<ChatMessage> getMessageHistory(Long roomId) {
         if (!roomRepository.existsById(roomId)) {
@@ -64,6 +83,27 @@ public class ChatService {
                 .toList();
     }
 
+    private Message ownMessage(Long roomId, Long messageId, String email) {
+        Message message = messageRepository.findByIdAndRoomId(messageId, roomId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Message not found"));
+        if (!message.getSender().getEmail().equalsIgnoreCase(email)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "You can only change your own messages");
+        }
+        return message;
+    }
+
+    private static String validContent(String content) {
+        String text = content == null ? "" : content.trim();
+        if (text.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Message cannot be empty");
+        }
+        if (text.length() > Message.MAX_LENGTH) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Message is too long (max " + Message.MAX_LENGTH + " characters)");
+        }
+        return text;
+    }
+
     private static ChatMessage toDto(Message msg, Long roomId) {
         ChatMessage dto = new ChatMessage();
         dto.setId(msg.getId());
@@ -71,6 +111,8 @@ public class ChatService {
         dto.setSender(msg.getSender().getUsername());
         dto.setRoomId(roomId);
         dto.setSentAt(msg.getSentAt().toString());
+        dto.setEditedAt(msg.getEditedAt() == null ? null : msg.getEditedAt().toString());
+        dto.setDeleted(msg.getDeletedAt() != null);
         return dto;
     }
 }

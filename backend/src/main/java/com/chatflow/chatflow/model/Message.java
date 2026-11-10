@@ -33,4 +33,10 @@ public class Message {
 
     @Builder.Default
     private Instant sentAt = Instant.now();
+
+    /** When the sender last edited the message (null if never edited). */
+    private Instant editedAt;
+
+    /** When the sender deleted the message (null if not deleted). Content is cleared on delete. */
+    private Instant deletedAt;
 }

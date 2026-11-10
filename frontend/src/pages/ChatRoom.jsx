@@ -5,9 +5,10 @@ import { ArrowDown, Hash, LoaderCircle, SendHorizontal, Users, WifiOff } from 'l
 import api, { WS_URL, getErrorMessage } from '../api/axios';
 import { useAuth } from '../context/auth';
 import AppShell from '../components/AppShell';
-import Avatar from '../components/Avatar';
 import Alert from '../components/Alert';
+import ConfirmDialog from '../components/ConfirmDialog';
 import MembersPanel from '../components/MembersPanel';
+import MessageRow from '../components/MessageRow';
 import TypingIndicator from '../components/TypingIndicator';
 
 const MAX_LENGTH = 2000;
@@ -28,10 +29,6 @@ function mergeMessages(a, b) {
     const byId = new Map();
     for (const m of [...a, ...b]) byId.set(m.id, m);
     return [...byId.values()].sort((x, y) => x.id - y.id);
-}
-
-function formatTime(date) {
-    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 function dayLabel(date) {
@@ -79,33 +76,6 @@ function MessageSkeleton() {
     );
 }
 
-function MessageRow({ item, isMe }) {
-    const { msg, date, grouped } = item;
-    return (
-        <div className={`group flex gap-3 ${isMe ? 'flex-row-reverse' : ''} ${grouped ? 'mt-0.5' : 'mt-4'}`}>
-            {grouped ? <div className="w-9 shrink-0" /> : <Avatar name={msg.sender} />}
-            <div className={`flex min-w-0 max-w-[80%] flex-col sm:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
-                {!grouped && (
-                    <div className={`mb-1 flex items-baseline gap-2 px-1 ${isMe ? 'flex-row-reverse' : ''}`}>
-                        <span className="text-sm font-semibold">{isMe ? 'You' : msg.sender}</span>
-                        <time dateTime={msg.sentAt} className="text-xs text-zinc-500 dark:text-zinc-400">{formatTime(date)}</time>
-                    </div>
-                )}
-                <div
-                    title={formatTime(date)}
-                    className={`whitespace-pre-wrap break-words px-3.5 py-2 text-[15px] leading-relaxed shadow-sm ${
-                        isMe
-                            ? 'rounded-2xl rounded-tr-md bg-brand-600 text-white'
-                            : 'rounded-2xl rounded-tl-md bg-white text-zinc-900 ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-zinc-700/60'
-                    }`}
-                >
-                    {msg.content}
-                </div>
-            </div>
-        </div>
-    );
-}
-
 export default function ChatRoom({ roomId }) {
     const { token, username } = useAuth();
     const [messages, setMessages] = useState([]);
@@ -118,6 +88,9 @@ export default function ChatRoom({ roomId }) {
     const [online, setOnline] = useState([]);
     const [typing, setTyping] = useState({}); // username -> time until which to show "typing"
     const [membersOpen, setMembersOpen] = useState(() => window.matchMedia('(min-width: 1280px)').matches);
+    const [editingId, setEditingId] = useState(null);
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [deleting, setDeleting] = useState(false);
     const clientRef = useRef(null);
     const scrollRef = useRef(null);
     const stickToBottomRef = useRef(true);
@@ -264,6 +237,44 @@ export default function ChatRoom({ roomId }) {
         if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             send();
+        } else if (e.key === 'ArrowUp' && !content) {
+            // Up arrow in an empty box edits your most recent message
+            const last = [...messages].reverse().find((m) => m.sender === username && !m.deleted);
+            if (last) {
+                e.preventDefault();
+                setEditingId(last.id);
+            }
+        }
+    };
+
+    const finishEditing = () => {
+        setEditingId(null);
+        textareaRef.current?.focus();
+    };
+
+    /** Returns true on success so the editor knows whether to close. */
+    const saveEdit = async (id, text) => {
+        try {
+            const res = await api.patch(`/rooms/${roomId}/messages/${id}`, { content: text });
+            setMessages((prev) => mergeMessages(prev, [res.data]));
+            finishEditing();
+            return true;
+        } catch (err) {
+            setError(getErrorMessage(err, 'Could not edit the message'));
+            return false;
+        }
+    };
+
+    const confirmDelete = async () => {
+        setDeleting(true);
+        try {
+            const res = await api.delete(`/rooms/${roomId}/messages/${deleteTarget.id}`);
+            setMessages((prev) => mergeMessages(prev, [res.data]));
+        } catch (err) {
+            setError(getErrorMessage(err, 'Could not delete the message'));
+        } finally {
+            setDeleting(false);
+            setDeleteTarget(null);
         }
     };
 
@@ -344,7 +355,16 @@ export default function ChatRoom({ roomId }) {
                                             <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
                                         </div>
                                     ) : (
-                                        <MessageRow key={item.key} item={item} isMe={item.msg.sender === username} />
+                                        <MessageRow
+                                            key={item.key}
+                                            item={item}
+                                            isMe={item.msg.sender === username}
+                                            editing={editingId === item.msg.id}
+                                            onEdit={() => setEditingId(item.msg.id)}
+                                            onDelete={() => setDeleteTarget(item.msg)}
+                                            onSave={(text) => saveEdit(item.msg.id, text)}
+                                            onCancel={finishEditing}
+                                        />
                                     )
                                 )
                             )}
@@ -411,6 +431,18 @@ export default function ChatRoom({ roomId }) {
                />
            )}
           </div>
+
+          {deleteTarget && (
+              <ConfirmDialog
+                  title="Delete message?"
+                  description="Everyone in the room will see that a message was deleted. This can't be undone."
+                  preview={deleteTarget.content}
+                  confirmLabel="Delete"
+                  busy={deleting}
+                  onConfirm={confirmDelete}
+                  onCancel={() => { if (!deleting) setDeleteTarget(null); }}
+              />
+          )}
         </AppShell>
     );
 }

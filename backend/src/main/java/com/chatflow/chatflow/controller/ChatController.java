@@ -1,12 +1,16 @@
 package com.chatflow.chatflow.controller;
 
 import com.chatflow.chatflow.dto.ChatMessage;
+import com.chatflow.chatflow.dto.EditMessageRequest;
 import com.chatflow.chatflow.dto.TypingEvent;
 import com.chatflow.chatflow.exception.ApiException;
 import com.chatflow.chatflow.service.ChatService;
 import com.chatflow.chatflow.service.PresenceService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageExceptionHandler;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -14,8 +18,11 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.annotation.SendToUser;
 import org.springframework.messaging.simp.annotation.SubscribeMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.security.Principal;
@@ -72,5 +79,29 @@ public class ChatController {
     @GetMapping("/api/rooms/{roomId}/messages")
     public List<ChatMessage> getHistory(@PathVariable Long roomId) {
         return chatService.getMessageHistory(roomId);
+    }
+
+    /**
+     * Edits your own message. The updated message is broadcast on the room topic with the same id,
+     * so connected clients replace it in place.
+     */
+    @PatchMapping("/api/rooms/{roomId}/messages/{messageId}")
+    public ChatMessage editMessage(@PathVariable Long roomId,
+                                   @PathVariable Long messageId,
+                                   @Valid @RequestBody EditMessageRequest request,
+                                   @AuthenticationPrincipal UserDetails user) {
+        ChatMessage updated = chatService.editMessage(roomId, messageId, user.getUsername(), request.getContent());
+        messagingTemplate.convertAndSend("/topic/room/" + roomId, updated);
+        return updated;
+    }
+
+    /** Deletes your own message (it remains as a "deleted" placeholder) and broadcasts the change. */
+    @DeleteMapping("/api/rooms/{roomId}/messages/{messageId}")
+    public ChatMessage deleteMessage(@PathVariable Long roomId,
+                                     @PathVariable Long messageId,
+                                     @AuthenticationPrincipal UserDetails user) {
+        ChatMessage deleted = chatService.deleteMessage(roomId, messageId, user.getUsername());
+        messagingTemplate.convertAndSend("/topic/room/" + roomId, deleted);
+        return deleted;
     }
 }
