@@ -2,6 +2,8 @@
 
 Real-time chat rooms: a Spring Boot backend (REST, WebSocket/STOMP, JWT, PostgreSQL) and a React frontend.
 
+**Live demo:** https://chatflow-frontend-gilt.vercel.app
+
 ```
 chatflow/
 ├── backend/    Spring Boot 3 · Java 17 · deployed on Render (Docker)
