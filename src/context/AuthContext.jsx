@@ -1,32 +1,32 @@
-import { createContext, useContext, useState } from 'react';
+import { useState } from 'react';
+import { AuthContext, clearStoredAuth, isTokenExpired } from './auth';
 
-const AuthContext = createContext();
+function readStoredAuth() {
+    const token = localStorage.getItem('token');
+    if (!token || isTokenExpired(token)) {
+        clearStoredAuth();
+        return { token: null, username: null };
+    }
+    return { token, username: localStorage.getItem('username') };
+}
 
 export function AuthProvider({ children }) {
-    const [token, setToken] = useState(localStorage.getItem('token'));
-    const [username, setUsername] = useState(localStorage.getItem('username'));
+    const [auth, setAuth] = useState(readStoredAuth);
 
-    const login = (newToken, newUsername) => {
-        localStorage.setItem('token', newToken);
-        localStorage.setItem('username', newUsername);
-        setToken(newToken);
-        setUsername(newUsername);
+    const login = (token, username) => {
+        localStorage.setItem('token', token);
+        localStorage.setItem('username', username);
+        setAuth({ token, username });
     };
 
     const logout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('username');
-        setToken(null);
-        setUsername(null);
+        clearStoredAuth();
+        setAuth({ token: null, username: null });
     };
 
     return (
-        <AuthContext.Provider value={{ token, username, login, logout }}>
+        <AuthContext.Provider value={{ ...auth, login, logout }}>
             {children}
         </AuthContext.Provider>
     );
-}
-
-export function useAuth() {
-    return useContext(AuthContext);
 }

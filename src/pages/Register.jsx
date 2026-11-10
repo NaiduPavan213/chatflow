@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import api from '../api/axios';
-import { useAuth } from '../context/AuthContext';
+import api, { getErrorMessage } from '../api/axios';
+import { useAuth } from '../context/auth';
+
+const inputClass =
+    'w-full bg-[#1a1a2e] text-white px-3 py-2 rounded-md border border-[#2d2f3e] focus:outline-none focus:border-[#5865f2] transition';
 
 export default function Register() {
     const [username, setUsername] = useState('');
@@ -21,7 +24,7 @@ export default function Register() {
             login(res.data.token, res.data.username);
             navigate('/rooms');
         } catch (err) {
-            setError(err.response?.data?.message || 'Registration failed');
+            setError(getErrorMessage(err, 'Registration failed'));
         } finally {
             setLoading(false);
         }
@@ -46,7 +49,10 @@ export default function Register() {
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             required
-                            className="w-full bg-[#1a1a2e] text-white px-3 py-2 rounded-md border border-[#2d2f3e] focus:outline-none focus:border-[#5865f2] transition"
+                            minLength={3}
+                            maxLength={30}
+                            autoComplete="username"
+                            className={inputClass}
                         />
                     </div>
                     <div>
@@ -58,7 +64,8 @@ export default function Register() {
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             required
-                            className="w-full bg-[#1a1a2e] text-white px-3 py-2 rounded-md border border-[#2d2f3e] focus:outline-none focus:border-[#5865f2] transition"
+                            autoComplete="email"
+                            className={inputClass}
                         />
                     </div>
                     <div>
@@ -70,8 +77,12 @@ export default function Register() {
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
-                            className="w-full bg-[#1a1a2e] text-white px-3 py-2 rounded-md border border-[#2d2f3e] focus:outline-none focus:border-[#5865f2] transition"
+                            minLength={6}
+                            maxLength={100}
+                            autoComplete="new-password"
+                            className={inputClass}
                         />
+                        <p className="text-[#8e9297] text-xs mt-1">At least 6 characters</p>
                     </div>
 
                     {error && (
@@ -83,7 +94,7 @@ export default function Register() {
                         disabled={loading}
                         className="w-full bg-[#5865f2] hover:bg-[#4752c4] text-white font-bold py-2 rounded-md transition disabled:opacity-50"
                     >
-                        {loading ? 'Creating account...' : 'Continue'}
+                        {loading ? 'Creating account…' : 'Continue'}
                     </button>
                 </form>
 
