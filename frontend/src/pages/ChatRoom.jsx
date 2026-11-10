@@ -1,15 +1,27 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
-import { ArrowDown, Hash, LoaderCircle, SendHorizontal, WifiOff } from 'lucide-react';
+import { ArrowDown, Hash, LoaderCircle, SendHorizontal, Users, WifiOff } from 'lucide-react';
 import api, { WS_URL, getErrorMessage } from '../api/axios';
 import { useAuth } from '../context/auth';
 import AppShell from '../components/AppShell';
 import Avatar from '../components/Avatar';
 import Alert from '../components/Alert';
+import MembersPanel from '../components/MembersPanel';
+import TypingIndicator from '../components/TypingIndicator';
 
 const MAX_LENGTH = 2000;
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
+/** How often we re-send "typing" while the user keeps typing, and how long others show it. */
+const TYPING_RESEND_MS = 3000;
+const TYPING_SHOW_MS = 6000;
+
+function withoutKey(obj, key) {
+    if (!(key in obj)) return obj;
+    const next = { ...obj };
+    delete next[key];
+    return next;
+}
 
 /** Union of two message lists, de-duplicated by id and ordered oldest first. */
 function mergeMessages(a, b) {
@@ -103,10 +115,14 @@ export default function ChatRoom({ roomId }) {
     const [connected, setConnected] = useState(false);
     const [error, setError] = useState('');
     const [atBottom, setAtBottom] = useState(true);
+    const [online, setOnline] = useState([]);
+    const [typing, setTyping] = useState({}); // username -> time until which to show "typing"
+    const [membersOpen, setMembersOpen] = useState(() => window.matchMedia('(min-width: 1280px)').matches);
     const clientRef = useRef(null);
     const scrollRef = useRef(null);
     const stickToBottomRef = useRef(true);
     const textareaRef = useRef(null);
+    const lastTypingSentRef = useRef(0);
 
     useEffect(() => {
         let cancelled = false;
@@ -128,9 +144,23 @@ export default function ChatRoom({ roomId }) {
             debug: () => {},
             onConnect: () => {
                 setConnected(true);
+                // Subscribing to the room topic is also what marks us as "online" in this room
                 client.subscribe(`/topic/room/${roomId}`, (frame) => {
                     const msg = JSON.parse(frame.body);
                     setMessages((prev) => mergeMessages(prev, [msg]));
+                    setTyping((prev) => withoutKey(prev, msg.sender));
+                });
+                client.subscribe(`/topic/room/${roomId}/presence`, (frame) => {
+                    setOnline(JSON.parse(frame.body).online);
+                });
+                // One-off snapshot of who is here right now
+                client.subscribe(`/app/room/${roomId}/presence`, (frame) => {
+                    setOnline(JSON.parse(frame.body).online);
+                });
+                client.subscribe(`/topic/room/${roomId}/typing`, (frame) => {
+                    const { username: who, typing: isTyping } = JSON.parse(frame.body);
+                    if (who === username) return;
+                    setTyping((prev) => (isTyping ? { ...prev, [who]: Date.now() + TYPING_SHOW_MS } : withoutKey(prev, who)));
                 });
                 client.subscribe('/user/queue/errors', (frame) => {
                     setError(JSON.parse(frame.body).message);
@@ -142,7 +172,11 @@ export default function ChatRoom({ roomId }) {
                 setConnected(false);
                 setError(frame.headers.message || 'Chat connection error');
             },
-            onWebSocketClose: () => setConnected(false),
+            onWebSocketClose: () => {
+                setConnected(false);
+                setOnline([]);
+                setTyping({});
+            },
         });
         client.activate();
         clientRef.current = client;
@@ -151,7 +185,19 @@ export default function ChatRoom({ roomId }) {
             cancelled = true;
             client.deactivate();
         };
-    }, [roomId, token]);
+    }, [roomId, token, username]);
+
+    // Drop "typing" for people who stopped without sending
+    useEffect(() => {
+        const id = setInterval(() => {
+            setTyping((prev) => {
+                const now = Date.now();
+                const live = Object.entries(prev).filter(([, until]) => until > now);
+                return live.length === Object.keys(prev).length ? prev : Object.fromEntries(live);
+            });
+        }, 1000);
+        return () => clearInterval(id);
+    }, []);
 
     // Follow new messages only when the reader is already at the bottom
     useLayoutEffect(() => {
@@ -180,6 +226,25 @@ export default function ChatRoom({ roomId }) {
         el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
     }, [content]);
 
+    const publishTyping = (isTyping) => {
+        const client = clientRef.current;
+        if (!client?.connected) return;
+        client.publish({ destination: `/app/chat/${roomId}/typing`, body: JSON.stringify({ typing: isTyping }) });
+    };
+
+    const handleChange = (e) => {
+        const value = e.target.value;
+        setContent(value);
+        const now = Date.now();
+        if (value.trim() && now - lastTypingSentRef.current > TYPING_RESEND_MS) {
+            lastTypingSentRef.current = now;
+            publishTyping(true);
+        } else if (!value.trim() && lastTypingSentRef.current) {
+            lastTypingSentRef.current = 0;
+            publishTyping(false);
+        }
+    };
+
     const send = () => {
         const text = content.trim();
         if (!text || !connected) return;
@@ -188,6 +253,8 @@ export default function ChatRoom({ roomId }) {
             destination: `/app/chat/${roomId}`,
             body: JSON.stringify({ content: text }),
         });
+        // Others clear our "typing" when the message arrives; reset so the next keystroke re-announces
+        lastTypingSentRef.current = 0;
         setContent('');
         setError('');
     };
@@ -202,6 +269,11 @@ export default function ChatRoom({ roomId }) {
 
     const timeline = buildTimeline(messages);
     const remaining = MAX_LENGTH - content.length;
+    // Our own subscription may not be in the server's snapshot yet, so add ourselves while connected
+    const onlineNames = connected && username && !online.includes(username)
+        ? [...online, username].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+        : online;
+    const typingNames = Object.keys(typing).filter((name) => name !== username);
 
     const header = (
         <div className="flex items-center gap-3">
@@ -214,11 +286,29 @@ export default function ChatRoom({ roomId }) {
                     {messages.length} {messages.length === 1 ? 'message' : 'messages'}
                 </p>
             </div>
-            {!connected && (
-                <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30">
-                    <WifiOff className="size-3.5" /> Reconnecting…
-                </span>
-            )}
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+                {!connected && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30">
+                        <WifiOff className="size-3.5" /> <span className="hidden sm:inline">Reconnecting…</span>
+                    </span>
+                )}
+                <button
+                    type="button"
+                    onClick={() => setMembersOpen((open) => !open)}
+                    aria-pressed={membersOpen}
+                    title="People in this room"
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition ${
+                        membersOpen
+                            ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+                            : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
+                    }`}
+                >
+                    <Users className="size-4" />
+                    <span className="font-medium">{onlineNames.length}</span>
+                    <span className="hidden sm:inline">online</span>
+                    <span className={`size-2 rounded-full ${onlineNames.length ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600'}`} />
+                </button>
+            </div>
         </div>
     );
 
@@ -228,6 +318,8 @@ export default function ChatRoom({ roomId }) {
             header={header}
             status={connected ? { label: 'Online', ok: true } : { label: 'Connecting…', ok: false }}
         >
+          <div className="flex min-h-0 flex-1">
+           <div className="flex min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-0 flex-1 flex-col">
                 <div ref={scrollRef} onScroll={handleScroll} className="scrollbar-thin flex-1 overflow-y-auto">
                     {!loaded ? (
@@ -272,8 +364,9 @@ export default function ChatRoom({ roomId }) {
             </div>
 
             {/* Composer */}
-            <div className="shrink-0 border-t border-zinc-200 bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="shrink-0 border-t border-zinc-200 bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 sm:px-6 dark:border-zinc-800 dark:bg-zinc-900">
                 <div className="mx-auto max-w-4xl">
+                    <TypingIndicator names={typingNames} />
                     {error && <div className="mb-2"><Alert onClose={() => setError('')}>{error}</Alert></div>}
                     <form
                         onSubmit={(e) => { e.preventDefault(); send(); }}
@@ -284,7 +377,7 @@ export default function ChatRoom({ roomId }) {
                             rows={1}
                             value={content}
                             maxLength={MAX_LENGTH}
-                            onChange={(e) => setContent(e.target.value)}
+                            onChange={handleChange}
                             onKeyDown={handleKeyDown}
                             placeholder={connected ? `Message #${roomName}` : 'Connecting to chat…'}
                             aria-label="Message"
@@ -307,6 +400,17 @@ export default function ChatRoom({ roomId }) {
                     </div>
                 </div>
             </div>
+           </div>
+
+           {membersOpen && (
+               <MembersPanel
+                   online={onlineNames}
+                   me={username}
+                   typingNames={typingNames}
+                   onClose={() => setMembersOpen(false)}
+               />
+           )}
+          </div>
         </AppShell>
     );
 }
