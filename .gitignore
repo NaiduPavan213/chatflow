@@ -1,0 +1,8 @@
+# Local secrets (each project also ignores its own)
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,6 +1,6 @@
 # ChatFlow backend
 
-Spring Boot 3 + WebSocket (STOMP over SockJS) + JWT + PostgreSQL. Frontend: `chatflow_frontend` (React + Vite).
+Spring Boot 3 + WebSocket (STOMP over SockJS) + JWT + PostgreSQL. Frontend: [`../frontend`](../frontend).
 
 ## Configuration
 
