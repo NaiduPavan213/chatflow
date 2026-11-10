@@ -10,6 +10,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -25,26 +26,23 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
-                                HttpServletResponse response,
-                                FilterChain filterChain)
-        throws ServletException, IOException {
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+        String authHeader = request.getHeader("Authorization");
 
-    String authHeader = request.getHeader("Authorization");
-    System.out.println("AUTH HEADER: " + authHeader); // ADD THIS LINE
-
-    if (authHeader != null && authHeader.startsWith("Bearer ")) {
-        String token = authHeader.substring(7);
-        System.out.println("TOKEN: " + token); // ADD THIS LINE
-        if (jwtUtil.isTokenValid(token)) {
-            System.out.println("TOKEN VALID"); // ADD THIS LINE
-            String email = jwtUtil.extractEmail(token);
-            UserDetails userDetails = userDetailsService.loadUserByUsername(email);
-            UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(
-                            userDetails, null, Collections.emptyList());
-            SecurityContextHolder.getContext().setAuthentication(auth);
+        if (authHeader != null && authHeader.startsWith("Bearer ")
+                && SecurityContextHolder.getContext().getAuthentication() == null) {
+            String token = authHeader.substring(7);
+            if (jwtUtil.isTokenValid(token)) {
+                try {
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(jwtUtil.extractEmail(token));
+                    SecurityContextHolder.getContext().setAuthentication(
+                            new UsernamePasswordAuthenticationToken(userDetails, null, Collections.emptyList()));
+                } catch (UsernameNotFoundException ignored) {
+                    // Token belongs to a user that no longer exists: leave the request unauthenticated (401).
+                }
+            }
         }
+        filterChain.doFilter(request, response);
     }
-    filterChain.doFilter(request, response);
-}
 }

@@ -3,6 +3,7 @@ package com.chatflow.chatflow.controller;
 import com.chatflow.chatflow.dto.RoomRequest;
 import com.chatflow.chatflow.dto.RoomResponse;
 import com.chatflow.chatflow.service.RoomService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -20,7 +21,7 @@ public class RoomController {
 
     @PostMapping
     public ResponseEntity<RoomResponse> createRoom(
-            @RequestBody RoomRequest request,
+            @Valid @RequestBody RoomRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
         return ResponseEntity.ok(roomService.createRoom(request, userDetails.getUsername()));
     }

@@ -2,21 +2,25 @@ package com.chatflow.chatflow.model;
 
 import jakarta.persistence.*;
 import lombok.*;
-import java.time.LocalDateTime;
+
+import java.time.Instant;
 
 @Entity
-@Table(name = "messages")
-@Data
+@Table(name = "messages", indexes = @Index(name = "idx_messages_room_id", columnList = "room_id, id"))
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class Message {
 
+    public static final int MAX_LENGTH = 2000;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = MAX_LENGTH)
     private String content;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -28,5 +32,5 @@ public class Message {
     private Room room;
 
     @Builder.Default
-    private LocalDateTime sentAt = LocalDateTime.now();
+    private Instant sentAt = Instant.now();
 }

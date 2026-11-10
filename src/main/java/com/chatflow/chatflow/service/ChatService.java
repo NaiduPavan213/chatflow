@@ -1,6 +1,7 @@
 package com.chatflow.chatflow.service;
 
 import com.chatflow.chatflow.dto.ChatMessage;
+import com.chatflow.chatflow.exception.ApiException;
 import com.chatflow.chatflow.model.Message;
 import com.chatflow.chatflow.model.Room;
 import com.chatflow.chatflow.model.User;
@@ -8,11 +9,14 @@ import com.chatflow.chatflow.repository.MessageRepository;
 import com.chatflow.chatflow.repository.RoomRepository;
 import com.chatflow.chatflow.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -22,40 +26,51 @@ public class ChatService {
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
 
+    @Transactional
     public ChatMessage saveMessage(Long roomId, String email, String content) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        String text = content == null ? "" : content.trim();
+        if (text.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Message cannot be empty");
+        }
+        if (text.length() > Message.MAX_LENGTH) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Message is too long (max " + Message.MAX_LENGTH + " characters)");
+        }
 
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "User not found"));
         Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new RuntimeException("Room not found"));
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Room not found"));
 
         Message message = new Message();
-        message.setContent(content);
+        message.setContent(text);
         message.setSender(user);
         message.setRoom(room);
-        message.setSentAt(LocalDateTime.now());
+        message.setSentAt(Instant.now());
 
-        messageRepository.save(message);
-
-        ChatMessage response = new ChatMessage();
-        response.setContent(content);
-        response.setSender(user.getUsername());
-        response.setRoomId(roomId);
-        response.setSentAt(message.getSentAt().toString());
-        return response;
+        return toDto(messageRepository.save(message), roomId);
     }
 
+    @Transactional(readOnly = true)
     public List<ChatMessage> getMessageHistory(Long roomId) {
-        return messageRepository.findByRoomIdOrderBySentAtAsc(roomId)
-                .stream()
-                .map(msg -> {
-                    ChatMessage cm = new ChatMessage();
-                    cm.setContent(msg.getContent());
-                    cm.setSender(msg.getSender().getUsername());
-                    cm.setRoomId(roomId);
-                    cm.setSentAt(msg.getSentAt().toString());
-                    return cm;
-                })
-                .collect(Collectors.toList());
+        if (!roomRepository.existsById(roomId)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Room not found");
+        }
+        // Repository returns newest first; the UI wants oldest first
+        List<Message> latest = new ArrayList<>(messageRepository.findTop100ByRoomIdOrderByIdDesc(roomId));
+        Collections.reverse(latest);
+        return latest.stream()
+                .map(msg -> toDto(msg, roomId))
+                .toList();
+    }
+
+    private static ChatMessage toDto(Message msg, Long roomId) {
+        ChatMessage dto = new ChatMessage();
+        dto.setId(msg.getId());
+        dto.setContent(msg.getContent());
+        dto.setSender(msg.getSender().getUsername());
+        dto.setRoomId(roomId);
+        dto.setSentAt(msg.getSentAt().toString());
+        return dto;
     }
 }
