@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api, { getErrorMessage } from '../api/axios';
 import { useAuth } from '../context/auth';
-
-const inputClass =
-    'w-full bg-[#1a1a2e] text-white px-3 py-2 rounded-md border border-[#2d2f3e] focus:outline-none focus:border-[#5865f2] transition';
+import AuthLayout from '../components/AuthLayout';
+import FormField from '../components/FormField';
+import SubmitButton from '../components/SubmitButton';
+import Alert from '../components/Alert';
 
 export default function Register() {
     const [username, setUsername] = useState('');
@@ -31,80 +32,47 @@ export default function Register() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-[#1a1a2e]">
-            <div className="w-full max-w-md bg-[#16213e] rounded-2xl p-8 shadow-2xl">
-                <div className="text-center mb-8">
-                    <div className="text-4xl mb-2">💬</div>
-                    <h1 className="text-2xl font-bold text-white">Create an account</h1>
-                    <p className="text-[#8e9297] text-sm mt-1">Join ChatFlow today!</p>
-                </div>
+        <AuthLayout
+            title="Create your account"
+            subtitle="It takes less than a minute."
+            footer={<>Already have an account? <Link to="/login" className="font-medium text-brand-600 hover:underline dark:text-brand-400">Log in</Link></>}
+        >
+            <form onSubmit={handleSubmit} className="space-y-5">
+                <FormField
+                    label="Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="How others will see you"
+                    autoComplete="username"
+                    minLength={3}
+                    maxLength={30}
+                    required
+                />
+                <FormField
+                    label="Email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                    required
+                />
+                <FormField
+                    label="Password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    hint="At least 6 characters"
+                    autoComplete="new-password"
+                    minLength={6}
+                    maxLength={100}
+                    required
+                />
 
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-[#8e9297] uppercase mb-2">
-                            Username
-                        </label>
-                        <input
-                            type="text"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            required
-                            minLength={3}
-                            maxLength={30}
-                            autoComplete="username"
-                            className={inputClass}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-[#8e9297] uppercase mb-2">
-                            Email
-                        </label>
-                        <input
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            required
-                            autoComplete="email"
-                            className={inputClass}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-[#8e9297] uppercase mb-2">
-                            Password
-                        </label>
-                        <input
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                            minLength={6}
-                            maxLength={100}
-                            autoComplete="new-password"
-                            className={inputClass}
-                        />
-                        <p className="text-[#8e9297] text-xs mt-1">At least 6 characters</p>
-                    </div>
+                {error && <Alert>{error}</Alert>}
 
-                    {error && (
-                        <p className="text-red-400 text-sm">{error}</p>
-                    )}
-
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-[#5865f2] hover:bg-[#4752c4] text-white font-bold py-2 rounded-md transition disabled:opacity-50"
-                    >
-                        {loading ? 'Creating account…' : 'Continue'}
-                    </button>
-                </form>
-
-                <p className="text-[#8e9297] text-sm mt-4">
-                    Already have an account?{' '}
-                    <Link to="/login" className="text-[#5865f2] hover:underline">
-                        Log In
-                    </Link>
-                </p>
-            </div>
-        </div>
+                <SubmitButton loading={loading} loadingText="Creating account…">Create account</SubmitButton>
+            </form>
+        </AuthLayout>
     );
 }
